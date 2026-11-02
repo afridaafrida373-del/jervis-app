@@ -28,7 +28,12 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.Locale
 
-const val CLAUDE_MODEL = "claude-sonnet-5-5"
+// Free Gemini model. Jodi kaj na kore, aistudio.google.com-e dekho kon model free ache.
+const val GEMINI_MODEL = "gemini-3.8-flash"
+
+const val SYSTEM_PROMPT =
+    "Tumi Jarvis, ekjon voice assistant. Shobshomoy shohoj Bangla-te, choto uttor dao " +
+        "(1-3 line), karon uttor mukhe bola hobe. Markdown ba emoji byabohar korbe na."
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
@@ -41,7 +46,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val bangla = Locale("bn", "BD")
 
     private fun apiKey(): String =
-        getSharedPreferences("jarvis", MODE_PRIVATE).getString("key", "") ?: ""
+        getSharedPreferences("jarvis", MODE_PRIVATE).getString("gemini_key", "") ?: ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +57,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setPadding(48, 48, 48, 48)
         }
         keyInput = EditText(this).apply {
-            hint = if (apiKey().isBlank()) "Claude API key boshao" else "API key save kora ache"
+            hint = if (apiKey().isBlank()) "Gemini API key boshao" else "API key save kora ache"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         val saveButton = Button(this).apply {
@@ -60,7 +65,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setOnClickListener {
                 val k = keyInput.text.toString().trim()
                 if (k.isNotEmpty()) {
-                    getSharedPreferences("jarvis", MODE_PRIVATE).edit().putString("key", k).apply()
+                    getSharedPreferences("jarvis", MODE_PRIVATE).edit()
+                        .putString("gemini_key", k).apply()
                     keyInput.setText("")
                     keyInput.hint = "API key save kora ache"
                     statusText.text = "Key save hoyeche. Ekhon mic chipe kotha bolo"
@@ -96,7 +102,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     statusText.text = "Bujhte parini, abar bolo"
                 } else {
                     statusText.text = "Tumi: $text"
-                    askClaude(text)
+                    askAi(text)
                 }
             }
 
@@ -144,30 +150,31 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (history.length() > 0) history.remove(history.length() - 1)
     }
 
-    private fun askClaude(userText: String) {
+    private fun message(role: String, text: String): JSONObject =
+        JSONObject()
+            .put("role", role)
+            .put("parts", JSONArray().put(JSONObject().put("text", text)))
+
+    private fun askAi(userText: String) {
         val key = apiKey()
         if (key.isBlank()) {
             statusText.text = "Age upore API key save koro"
             return
         }
-        history.put(JSONObject().put("role", "user").put("content", userText))
+        history.put(message("user", userText))
 
         val body = JSONObject()
-            .put("model", CLAUDE_MODEL)
-            .put("max_tokens", 500)
             .put(
-                "system",
-                "Tumi Jarvis, ekjon voice assistant. Shobshomoy shohoj Bangla-te, choto uttor dao " +
-                    "(1-3 line), karon uttor mukhe bola hobe. Markdown ba emoji byabohar korbe na."
+                "systemInstruction",
+                JSONObject().put("parts", JSONArray().put(JSONObject().put("text", SYSTEM_PROMPT)))
             )
-            .put("messages", history)
+            .put("contents", history)
             .toString()
             .toRequestBody("application/json".toMediaType())
 
         val request = Request.Builder()
-            .url("https://api.anthropic.com/v1/messages")
-            .addHeader("x-api-key", key)
-            .addHeader("anthropic-version", "2023-06-01")
+            .url("https://generativelanguage.googleapis.com/v1beta/models/$GEMINI_MODEL:generateContent")
+            .addHeader("x-goog-api-key", key)
             .post(body)
             .build()
 
@@ -182,11 +189,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             override fun onResponse(call: Call, response: Response) {
                 val raw = response.body?.string().orEmpty()
                 try {
-                    val reply = JSONObject(raw)
-                        .getJSONArray("content")
+                    val parts = JSONObject(raw)
+                        .getJSONArray("candidates")
                         .getJSONObject(0)
-                        .getString("text")
-                    history.put(JSONObject().put("role", "assistant").put("content", reply))
+                        .getJSONObject("content")
+                        .getJSONArray("parts")
+                    val sb = StringBuilder()
+                    for (i in 0 until parts.length()) {
+                        sb.append(parts.getJSONObject(i).optString("text", ""))
+                    }
+                    val reply = sb.toString().trim()
+                    if (reply.isEmpty()) throw IllegalStateException("empty reply")
+                    history.put(message("model", reply))
                     runOnUiThread {
                         statusText.text = "Jarvis: $reply"
                         tts.speak(reply, TextToSpeech.QUEUE_FLUSH, null, "jarvis")
