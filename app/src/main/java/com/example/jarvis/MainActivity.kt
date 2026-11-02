@@ -41,7 +41,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var recognizer: SpeechRecognizer
     private lateinit var statusText: TextView
     private lateinit var keyInput: EditText
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder().connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS).readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).callTimeout(120, java.util.concurrent.TimeUnit.SECONDS).build()
     private val history = JSONArray()
     private val bangla = Locale("bn", "BD")
 
